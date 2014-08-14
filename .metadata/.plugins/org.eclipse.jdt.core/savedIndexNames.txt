@@ -1,0 +1,13 @@
+INDEX VERSION 1.126+/Users/shine/git/estimote_beacons/.metadata/.plugins/org.eclipse.jdt.core
+1036571949.index
+3794369799.index
+961904874.index
+1594055279.index
+2116146691.index
+3295647080.index
+3785045612.index
+2768593423.index
+2430298026.index
+1365657611.index
+5130717.index
+2405190248.index

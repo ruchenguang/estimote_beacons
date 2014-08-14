@@ -1,0 +1,227 @@
+package com.huaban.indoorlocation;
+
+import java.util.List;
+
+import com.estimote.sdk.Beacon;
+import com.estimote.sdk.BeaconManager;
+import com.estimote.sdk.Region;
+import com.estimote.sdk.Utils;
+
+import android.app.Activity;
+import android.bluetooth.BluetoothAdapter;
+import android.content.Intent;
+import android.graphics.Point;
+import android.os.Bundle;
+import android.os.RemoteException;
+import android.util.Log;
+import android.view.MenuItem;
+import android.view.SurfaceHolder;
+import android.view.SurfaceView;
+import android.widget.Toast;
+
+
+public class MainActivity extends Activity {
+	  private static final String TAG = "Indoor Location::MainActivity";
+
+	  private SurfaceView sfv;
+	  private SurfaceHolder sfh;
+	  private BeaconManager beaconManager;
+	  private Beacon beacon;
+	  private static final Region ALL_ESTIMOTE_BEACONS_REGION = new Region("rid", null, null, null);
+
+	  private static final String GREEN_MAC_ADDRESS = "D4:2C:A4:4E:56:48";
+	  private static final String BLUE_MAC_ADDRESS = "EC:23:E0:58:8F:10";
+	  private static final String PURPLE_MAC_ADDRESS = "E1:25:8D:97:25:9F";
+	  
+	  //位置点坐标系相关
+	  private final int GREEN_NUM = 0;
+	  private final int BLUE_NUM = 1;
+	  private final int PURPLE_NUM = 2;
+	  
+	  private int width, height; 		//定义地图的长宽，例如w*h个方格
+	  private double[][][] distance;
+	  private double unitLength;
+	  private Point greenXY, blueXY, purpleXY;
+	  private int beaconsNum;
+	  private double roofHeight;
+	  private double phoneHeight;
+	  private double correctionHeight; // correctionHeight = roofHeight - phoneHeight 用于校正高度
+	  private double greenDistance, blueDistance, purpleDistance; //从beacons收集到的距离信息
+	  private int locationX, locationY;
+	  private float screenX, screenY;
+	  
+	  public MainActivity() {
+		  //初始化各种参数
+		  roofHeight = 3;
+		  phoneHeight = 1.5;
+		  correctionHeight = roofHeight - phoneHeight;
+		  Log.d(TAG, "The correction height is " + correctionHeight);
+		  
+		  width = 15;
+		  height = 20;
+		  beaconsNum = 3;
+		  
+		  greenXY = new Point(1, 1);
+		  blueXY = new Point(0, 0);
+		  purpleXY = new Point(5, 17);
+		  
+		  distance = new double[width+1][height+1][beaconsNum];
+		  for(int x=0; x<width+1; x++){
+			  for(int y=0; y<height+1; y++){
+				  Point p = new Point(x, y);
+				  distance[x][y][GREEN_NUM] = caculateDistance(p, greenXY);
+				  distance[x][y][BLUE_NUM] = caculateDistance(p, blueXY);
+				  distance[x][y][PURPLE_NUM] = caculateDistance(p, purpleXY);
+			  }
+		  }
+		  
+		  unitLength = 0.5;
+	  }
+	  
+	  @Override
+	  protected void onCreate(Bundle savedInstanceState) {
+	    super.onCreate(savedInstanceState);
+	    
+	    getActionBar().setDisplayHomeAsUpEnabled(true);
+	    setContentView(R.layout.activity_main);
+
+	    sfv = (SurfaceView) findViewById(R.id.surfaceView1);
+	    sfh = sfv.getHolder();
+	    sfh.addCallback(new MySfvCallback());
+	    
+	    beaconManager = new BeaconManager(this);
+	    beaconManager.setRangingListener(new BeaconManager.RangingListener() {
+	      @Override
+	      public void onBeaconsDiscovered(Region region, final List<Beacon> rangedBeacons) {
+	        // Note that results are not delivered on UI thread.
+	        runOnUiThread(new Runnable() {
+	          @Override
+	          public void run() {
+	            // Just in case if there are multiple beacons with the same uuid, major, minor.
+	            for (Beacon rangedBeacon : rangedBeacons) {
+	            	if(rangedBeacon.getMacAddress().equals(GREEN_MAC_ADDRESS)){
+	            		greenDistance = Utils.computeAccuracy(rangedBeacon);
+		            	Log.d(TAG, "The distance of the green beacon " + rangedBeacon.getMacAddress() 
+		            			+ " is " + Utils.computeAccuracy(rangedBeacon));
+	            	} else if(rangedBeacon.getMacAddress().equals(BLUE_MAC_ADDRESS)){
+		            	Log.d(TAG, "The distance of the blue beacon " + rangedBeacon.getMacAddress() 
+		            			+ " is " + Utils.computeAccuracy(rangedBeacon));
+	            		blueDistance = Utils.computeAccuracy(rangedBeacon);
+	            	} else if(rangedBeacon.getMacAddress().equals(PURPLE_MAC_ADDRESS)){
+		            	Log.d(TAG, "The distance of the purple beacon " + rangedBeacon.getMacAddress() 
+		            			+ " is " + Utils.computeAccuracy(rangedBeacon));
+	            		purpleDistance = Utils.computeAccuracy(rangedBeacon);
+	            	}
+	            	updateLocationView();
+	            }
+	          }
+	        });
+	      }
+	    });
+	  }
+
+	  @Override
+	  public boolean onOptionsItemSelected(MenuItem item) {
+	    if (item.getItemId() == android.R.id.home) {
+	      finish();
+	      return true;
+	    }
+	    return super.onOptionsItemSelected(item);
+	  }
+
+	  @Override
+	  protected void onStart() {
+	    super.onStart();
+
+	    // Check if device supports Bluetooth Low Energy.
+	    if (!beaconManager.hasBluetooth()) {
+	      Toast.makeText(this, "Device does not have Bluetooth Low Energy", Toast.LENGTH_LONG).show();
+	      return;
+	    }
+
+	    // If Bluetooth is not enabled, let user enable it.
+	    if (!beaconManager.isBluetoothEnabled()) {
+	      Intent enableBtIntent = new Intent(BluetoothAdapter.ACTION_REQUEST_ENABLE);
+	      startActivityForResult(enableBtIntent, REQUEST_ENABLE_BT);
+	    } else {
+	      connectToService();
+	    }
+	    
+	    
+	    
+	    
+	    beaconManager.connect(new BeaconManager.ServiceReadyCallback() {
+	      @Override
+	      public void onServiceReady() {
+	        try {
+	          beaconManager.startRanging(ALL_ESTIMOTE_BEACONS_REGION);
+	        } catch (RemoteException e) {
+	          Toast.makeText(MainActivity.this, "Cannot start ranging, something terrible happened",
+	              Toast.LENGTH_LONG).show();
+	          Log.e(TAG, "Cannot start ranging", e);
+	        }
+	      }
+	    });
+	  }
+
+	  @Override
+	  protected void onStop() {
+		  beaconManager.disconnect();
+	    
+		  try {
+			  beaconManager.stopRanging(ALL_ESTIMOTE_BEACONS_REGION);
+	      } catch (RemoteException e) {
+	    	  Log.d(TAG, "Error while stopping ranging", e);
+	      }
+
+	      super.onStop();
+	  }
+	  
+	  private void updateLocationView() {
+		  //计算网格坐标
+		  caculateXY();
+		  
+		  //计算像素坐标
+		  
+		  //dotView.animate().translationX(x).translationY(y).start();
+	  }
+	  
+	  private double correctHeightEffect(double height, double distance) {
+		  //使用勾股定理校正高度的影响  
+		  return Math.sqrt(distance*distance - height*height);
+	  }
+	  
+	  private void caculateXY(){
+		  //对高度做校正 + 获得网格距离
+		  double greenD = correctHeightEffect(greenDistance, correctionHeight)/unitLength;
+		  double blueD= correctHeightEffect(blueDistance, correctionHeight)/unitLength;
+		  double purpleD= correctHeightEffect(purpleDistance, correctionHeight)/unitLength;
+		  
+		  //计算最小方差点
+		  double minSumOfSquare = 1000;
+		  Point location = new Point(0, 0);
+		  for(int x=0; x<width+1; x++){
+			  for(int y=0; y<height+1; y++){
+				  double sumOfSquare = 
+						  square(greenD - distance[x][y][GREEN_NUM]) +
+						  square(blueD - distance[x][y][BLUE_NUM]) + 
+						  square(purpleD - distance[x][y][PURPLE_NUM]);
+				  if (sumOfSquare < minSumOfSquare){
+					  minSumOfSquare = sumOfSquare;
+					  location.x = x;
+					  location.y = y;
+				  }
+			  }
+		  }
+		  locationX = location.x;
+		  locationY = location.y;
+	  }
+	  
+	  private double caculateDistance(Point p1, Point p2){
+		  return Math.sqrt((p1.x-p2.x)*(p1.x-p2.x) + (p1.y-p2.y)*(p1.y-p2.y));
+	  }
+	  private double square(double x){
+		  return Math.pow(x, 2);
+	  }
+}
+
